@@ -1,81 +1,69 @@
-const express = require('express');
-const cors    = require('cors');
+const express      = require('express');
+const cors         = require('cors');
+const helmet       = require('helmet');
+const morgan       = require('morgan');
+const swaggerUi    = require('swagger-ui-express');
 
-const authRoutes  = require('./routes/auth');
-const notesRoutes = require('./routes/notes');
-const openapi     = require('./openapi');
+const routes       = require('./routes');
+const swaggerSpec  = require('./config/swagger');
+const errorHandler = require('./middlewares/error.middleware');
 
 const app = express();
 
+// ── Security headers (CSP disabled so Swagger UI loads its inline scripts) ───
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// ── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors());
+
+// ── Body parsing ──────────────────────────────────────────────────────────────
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-app.use(authRoutes);
+// ── HTTP request logging ─────────────────────────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
 
-// ── Notes ─────────────────────────────────────────────────────────────────────
-app.use('/notes', notesRoutes);
+// ── API routes ────────────────────────────────────────────────────────────────
+app.use('/', routes);
 
-// ── Search (top-level alias) ──────────────────────────────────────────────────
-const auth = require('./middleware/auth');
-const db   = require('./db');
+// ── Swagger UI ────────────────────────────────────────────────────────────────
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
-app.get('/search', auth, (req, res) => {
-  const q = (req.query.q || '').trim();
-  if (!q) return res.status(400).json({ message: 'Query parameter q is required' });
-
-  const kw = `%${q}%`;
-  const notes = db.prepare(`
-    SELECT DISTINCT n.* FROM notes n
-    LEFT JOIN note_shares ns ON n.id = ns.note_id
-    WHERE (n.owner_id = ? OR ns.user_id = ?)
-      AND (n.title LIKE ? OR n.content LIKE ?)
-    ORDER BY n.updated_at DESC
-  `).all(req.user.id, req.user.id, kw, kw);
-
-  res.json(notes.map(n => ({
-    id: n.id, title: n.title, content: n.content,
-    category: n.category || null, created_at: n.created_at, updated_at: n.updated_at,
-  })));
-});
-
-// ── OpenAPI spec ──────────────────────────────────────────────────────────────
-app.get('/openapi.json', (req, res) => res.json(openapi));
+// ── OpenAPI JSON spec ─────────────────────────────────────────────────────────
+app.get('/openapi.json', (req, res) => res.json(swaggerSpec));
 
 // ── About ─────────────────────────────────────────────────────────────────────
-app.get('/about', (req, res) => res.json({
-  name:  'YOUR_NAME_HERE',  // TODO: replace with your name
-  email: 'chemicalliving2005@gmail.com',
-  'my features': {
-    'Note Categories/Tags': (
-      'Users can assign a category string (e.g. "work", "personal", "shopping") ' +
-      'to any note at create or update time. ' +
-      'GET /notes/category/{name} returns all notes (owned + shared) that match ' +
-      'that category, case-insensitively. ' +
-      'This mirrors the label/folder UX in Google Keep and requires no schema changes ' +
-      'beyond a single nullable text column, keeping the API simple to extend.'
-    ),
-  },
-}));
+app.get('/about', (req, res) =>
+  res.json({
+    name:  'Harsh Prajapati',
+    email: 'chemicalliving2005@gmail.com',
+    'my features': {
+      'Full-Text Search':
+        'Search notes by title, content, and tags using GET /notes?q=keyword. ' +
+        'Powered by a MongoDB compound text index for fast, relevance-ranked results.',
+      'Pagination':
+        'GET /notes accepts ?page and ?limit query params. ' +
+        'Total count and page metadata are returned in X-Total-Count, ' +
+        'X-Total-Pages, and X-Current-Page response headers.',
+      'Note Pinning':
+        'Pin/unpin any owned note via PATCH /notes/:id/pin. ' +
+        'Pinned notes always sort to the top in GET /notes results.',
+      'Note Tags':
+        'Attach an array of string tags to a note at create or update time. ' +
+        'Tags are included in full-text search and returned with every note.',
+    },
+  })
+);
 
-// ── Root → Swagger UI ─────────────────────────────────────────────────────────
-app.get('/', (req, res) => {
-  const spec = `${req.protocol}://${req.get('host')}/openapi.json`;
-  res.send(`<!DOCTYPE html>
-<html>
-  <head>
-    <title>Notes API</title>
-    <meta charset="utf-8"/>
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css"/>
-  </head>
-  <body>
-    <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
-    <script>
-      SwaggerUIBundle({ url: "${spec}", dom_id: '#swagger-ui', presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset] });
-    </script>
-  </body>
-</html>`);
-});
+// ── Root → Swagger UI redirect ────────────────────────────────────────────────
+app.get('/', (req, res) => res.redirect('/api-docs'));
+
+// ── 404 catch-all ─────────────────────────────────────────────────────────────
+app.use((req, res) => res.status(404).json({ message: `Route ${req.originalUrl} not found` }));
+
+// ── Centralised error handler (must be last) ──────────────────────────────────
+app.use(errorHandler);
 
 module.exports = app;

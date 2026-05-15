@@ -7,10 +7,26 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongo:27017/notes-app
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-      - DATABASE_PATH=/data/notes.db
+      - JWT_EXPIRES_IN=24h
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7-jammy
+    ports:
+      - "27017:27017"
     volumes:
-      - notes_data:/data
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  notes_data:
+  mongo_data:
