@@ -4,9 +4,13 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "3000:3000"
     environment:
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./notes.db}
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - DATABASE_PATH=/data/notes.db
     volumes:
-      - ./notes.db:/app/notes.db
+      - notes_data:/data
+
+volumes:
+  notes_data:
